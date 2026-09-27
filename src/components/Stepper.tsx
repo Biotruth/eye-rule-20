@@ -11,9 +11,13 @@ interface StepperProps {
   max: number;
   step: number;
   onChange: (next: number) => void;
+  /** Overrides the numeral display (e.g. "9:00 AM" instead of "540 min"). */
+  formatValue?: (value: number) => string;
+  /** Overrides the "min–max unit" subtitle under the label. */
+  rangeLabel?: string;
 }
 
-export function Stepper({ label, value, unit, min, max, step, onChange }: StepperProps) {
+export function Stepper({ label, value, unit, min, max, step, onChange, formatValue, rangeLabel }: StepperProps) {
   const dec = () => onChange(Math.max(min, value - step));
   const inc = () => onChange(Math.min(max, value + step));
 
@@ -21,9 +25,7 @@ export function Stepper({ label, value, unit, min, max, step, onChange }: Steppe
     <View style={styles.row}>
       <View style={styles.labelBlock}>
         <Text style={styles.label}>{label}</Text>
-        <Text style={styles.range}>
-          {min}–{max} {unit}
-        </Text>
+        <Text style={styles.range}>{rangeLabel ?? `${min}–${max} ${unit}`}</Text>
       </View>
       <View style={styles.control}>
         <Pressable
@@ -36,9 +38,7 @@ export function Stepper({ label, value, unit, min, max, step, onChange }: Steppe
         >
           <Ionicons name="remove" size={20} color={value <= min ? colors.textMuted : colors.textPrimary} />
         </Pressable>
-        <Text style={styles.value}>
-          {value} {unit}
-        </Text>
+        <Text style={styles.value}>{formatValue ? formatValue(value) : `${value} ${unit}`}</Text>
         <Pressable
           style={[styles.button, value >= max && styles.buttonDisabled]}
           onPress={inc}
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: typography.title,
     fontWeight: '600',
-    minWidth: 90,
+    minWidth: 104,
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },

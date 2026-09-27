@@ -3,9 +3,11 @@ import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PermissionBanner } from '@/components/PermissionBanner';
 import { Stepper } from '@/components/Stepper';
+import { WeekdayPicker } from '@/components/WeekdayPicker';
 import { BREAK_SECONDS_RANGE, WORK_MINUTES_RANGE } from '@/constants/timer';
 import { colors, spacing, typography } from '@/constants/theme';
 import { cancelAllScheduledAsync, logScheduledNotificationsAsync } from '@/notifications/notifications';
+import { formatMinutesOfDay } from '@/timer/activeHours';
 import { useTimer } from '@/timer/TimerContext';
 
 function SettingsRow({
@@ -36,14 +38,14 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
-  const { settings, updateSettings, notificationsGranted, canAskAgain, requestNotificationPermission } =
+  const { settings, updateSettings, notificationsGranted, canAskAgain, showPermissionPrimer, showOnboarding } =
     useTimer();
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         {!notificationsGranted && (
-          <PermissionBanner canAskAgain={canAskAgain} onRequestPermission={requestNotificationPermission} />
+          <PermissionBanner canAskAgain={canAskAgain} onRequestPermission={showPermissionPrimer} />
         )}
 
         <Text style={styles.sectionTitle}>Durations</Text>
@@ -67,6 +69,56 @@ export default function SettingsScreen() {
             step={5}
             onChange={(breakSeconds) => updateSettings({ breakSeconds })}
           />
+        </View>
+
+        <Text style={styles.sectionTitle}>Active Hours</Text>
+        <View style={styles.card}>
+          <SettingsRow
+            label="Restrict to active hours"
+            description="Off by default — reminders just run whenever you turn them on, no schedule. Turn this on to auto-pause outside set hours/days instead."
+            value={settings.activeHoursEnabled}
+            onValueChange={(activeHoursEnabled) => updateSettings({ activeHoursEnabled })}
+          />
+          {settings.activeHoursEnabled && (
+            <>
+              <View style={styles.divider} />
+              <Stepper
+                label="Starts"
+                value={settings.activeHours.startMinutes}
+                unit="min"
+                min={0}
+                max={settings.activeHours.endMinutes - 30}
+                step={30}
+                formatValue={formatMinutesOfDay}
+                rangeLabel="When the standing schedule begins each active day"
+                onChange={(startMinutes) =>
+                  updateSettings({ activeHours: { ...settings.activeHours, startMinutes } })
+                }
+              />
+              <View style={styles.divider} />
+              <Stepper
+                label="Ends"
+                value={settings.activeHours.endMinutes}
+                unit="min"
+                min={settings.activeHours.startMinutes + 30}
+                max={24 * 60}
+                step={30}
+                formatValue={formatMinutesOfDay}
+                rangeLabel="When it stops for the day"
+                onChange={(endMinutes) =>
+                  updateSettings({ activeHours: { ...settings.activeHours, endMinutes } })
+                }
+              />
+              <View style={styles.divider} />
+              <View style={styles.weekdayRow}>
+                <Text style={styles.label}>Active days</Text>
+                <WeekdayPicker
+                  value={settings.activeWeekdays}
+                  onChange={(activeWeekdays) => updateSettings({ activeWeekdays })}
+                />
+              </View>
+            </>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>Alerts</Text>
@@ -96,30 +148,47 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {__DEV__ && Platform.OS !== 'web' && (
+        <Text style={styles.sectionTitle}>About</Text>
+        <View style={styles.card}>
+          <Pressable style={styles.debugRow} onPress={showOnboarding} accessibilityRole="button">
+            <Text style={styles.label}>How the 20-20-20 rule works</Text>
+            <Text style={styles.description}>Replay the short first-launch explainer</Text>
+          </Pressable>
+        </View>
+
+        {__DEV__ && (
           <>
             <Text style={styles.sectionTitle}>Debug</Text>
             <View style={styles.card}>
-              <Pressable
-                style={styles.debugRow}
-                onPress={() => logScheduledNotificationsAsync()}
-                accessibilityRole="button"
-              >
-                <Text style={styles.label}>Log scheduled notifications</Text>
-                <Text style={styles.description}>Prints the pending schedule to the JS console</Text>
+              <Pressable style={styles.debugRow} onPress={showPermissionPrimer} accessibilityRole="button">
+                <Text style={styles.label}>Show permission primer</Text>
+                <Text style={styles.description}>Previews the pre-permission explainer screen</Text>
               </Pressable>
-              <View style={styles.divider} />
-              <Pressable
-                style={styles.debugRow}
-                onPress={() => cancelAllScheduledAsync()}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.label, { color: colors.danger }]}>Stop all reminders</Text>
-                <Text style={styles.description}>
-                  Cancels every pending notification (repeating + one-shots). Does not affect the
-                  running timer.
-                </Text>
-              </Pressable>
+              {Platform.OS !== 'web' && (
+                <>
+                  <View style={styles.divider} />
+                  <Pressable
+                    style={styles.debugRow}
+                    onPress={() => logScheduledNotificationsAsync().catch(() => {})}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.label}>Log scheduled notifications</Text>
+                    <Text style={styles.description}>Prints the pending schedule to the JS console</Text>
+                  </Pressable>
+                  <View style={styles.divider} />
+                  <Pressable
+                    style={styles.debugRow}
+                    onPress={() => cancelAllScheduledAsync().catch(() => {})}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.label, { color: colors.danger }]}>Stop all reminders</Text>
+                    <Text style={styles.description}>
+                      Cancels every pending notification (repeating + one-shots). Does not affect the
+                      running timer.
+                    </Text>
+                  </Pressable>
+                </>
+              )}
             </View>
           </>
         )}
@@ -179,5 +248,9 @@ const styles = StyleSheet.create({
   debugRow: {
     paddingVertical: spacing.md,
     gap: 2,
+  },
+  weekdayRow: {
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
   },
 });

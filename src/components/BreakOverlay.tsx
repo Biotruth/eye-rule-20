@@ -2,14 +2,19 @@ import React from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ProgressRing } from '@/components/ProgressRing';
+import { BREAK_PROMPTS } from '@/constants/breakPrompts';
 import { colors, spacing, typography } from '@/constants/theme';
 import { useTimer } from '@/timer/TimerContext';
 
 export function BreakOverlay() {
-  const { phase, remainingMs, phaseDurationMs, skipBreak } = useTimer();
+  const { phase, remainingMs, phaseDurationMs, cyclesCompletedToday, skipBreak } = useTimer();
   const visible = phase === 'BREAK';
   const seconds = Math.ceil(remainingMs / 1000);
   const progress = phaseDurationMs > 0 ? 1 - remainingMs / phaseDurationMs : 0;
+  // cyclesCompletedToday only increments when a break actually finishes
+  // (not when one is skipped), so it stays stable for this break's whole
+  // duration and advances to the next prompt for the next one.
+  const prompt = BREAK_PROMPTS[cyclesCompletedToday % BREAK_PROMPTS.length];
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent presentationStyle="fullScreen">
@@ -21,7 +26,7 @@ export function BreakOverlay() {
             <Text style={styles.secondsLabel}>seconds</Text>
           </ProgressRing>
           <Text style={styles.instruction}>Look 20 feet away.</Text>
-          <Text style={styles.subInstruction}>Give your eyes a real rest.</Text>
+          <Text style={styles.subInstruction}>{prompt}</Text>
         </View>
         <Pressable style={styles.skipButton} onPress={skipBreak} accessibilityRole="button">
           <Text style={styles.skipText}>Skip</Text>

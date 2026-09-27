@@ -3,6 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { BreakOverlay } from '@/components/BreakOverlay';
+import { OnboardingModal } from '@/components/OnboardingModal';
+import { PermissionPrimerModal } from '@/components/PermissionPrimerModal';
 import { colors } from '@/constants/theme';
 import { TimerProvider, useTimer } from '@/timer/TimerContext';
 import { useConditionalKeepAwake } from '@/timer/useConditionalKeepAwake';
@@ -31,6 +33,8 @@ export default function RootLayout() {
           <Stack.Screen name="settings" options={{ title: 'Settings', presentation: 'modal' }} />
         </Stack>
         <BreakOverlay />
+        <PermissionPrimerModal />
+        <OnboardingModal />
       </TimerProvider>
     </SafeAreaProvider>
   );

@@ -4,6 +4,13 @@ import { CYCLES_TO_SCHEDULE, Phase } from '@/constants/timer';
 
 export const ANDROID_CHANNEL_ID = 'eye-break-alerts';
 
+// A separate, low-importance channel for the ongoing status notification —
+// deliberately distinct from the alert channel above so this silent,
+// constantly-present notification never inherits MAX importance/sound/
+// vibration (which would make Android re-alert the user on every update).
+export const ANDROID_ONGOING_CHANNEL_ID = 'eye-break-ongoing-status';
+const ONGOING_STATUS_ID = 'eye-rule-20-ongoing-status';
+
 // A single, stable identifier for the "time for a break" alert. Scheduling
 // with this identifier again always replaces the previous request (both
 // iOS's UNUserNotificationCenter and expo-notifications' Android scheduler
@@ -27,6 +34,37 @@ const BREAK_END_SLOT_IDS = Array.from(
 // one consistent, cross-platform contract). Our work-duration range
 // (5-60 min) never gets near this floor; it's here defensively.
 const IOS_MIN_REPEATING_SECONDS = 60;
+
+// Notification actions on the work-end "time for a break" alert. Every
+// mode gets Snooze/Skip/Done; ALWAYS_ON additionally gets Pause 1 hour —
+// since a notification's categoryIdentifier is a single value, that means
+// two category registrations with overlapping action identifiers rather
+// than one category whose actions vary by context.
+export const BREAK_ALERT_CATEGORY_ID = 'BREAK_ALERT';
+export const BREAK_ALERT_ALWAYS_ON_CATEGORY_ID = 'BREAK_ALERT_ALWAYS_ON';
+export const SNOOZE_ACTION_ID = 'eye-rule-20-snooze-5';
+export const SKIP_ACTION_ID = 'eye-rule-20-skip';
+export const DONE_ACTION_ID = 'eye-rule-20-done';
+export const PAUSE_ONE_HOUR_ACTION_ID = 'eye-rule-20-pause-1-hour';
+
+export const SNOOZE_DURATION_MS = 5 * 60 * 1000;
+
+export type NotificationActionKind = 'snooze' | 'skip' | 'done' | 'pause';
+
+function mapActionIdentifier(actionIdentifier: string): NotificationActionKind | null {
+  switch (actionIdentifier) {
+    case SNOOZE_ACTION_ID:
+      return 'snooze';
+    case SKIP_ACTION_ID:
+      return 'skip';
+    case DONE_ACTION_ID:
+      return 'done';
+    case PAUSE_ONE_HOUR_ACTION_ID:
+      return 'pause';
+    default:
+      return null;
+  }
+}
 
 // expo-notifications does not implement local-notification scheduling on
 // web (no service-worker-backed alarm scheduler), so every scheduling/
@@ -57,6 +95,30 @@ export function configureNotificationHandler(): void {
 }
 
 /**
+ * Registers the two BREAK_ALERT categories (with vs. without the "Pause 1
+ * hour" action) that carry action buttons on the work-end alert. Must run
+ * before scheduling any notification that references either identifier
+ * via `categoryIdentifier` — same "call before scheduling" contract as the
+ * Android channel below. Every action defaults `opensAppToForeground` to
+ * true (Expo's default), so a tap always runs TimerContext's response
+ * listener — registering the category only makes the buttons appear, it
+ * doesn't handle the tap itself.
+ */
+export async function configureNotificationCategoriesAsync(): Promise<void> {
+  if (!SCHEDULING_SUPPORTED) return;
+  const breakActions: Notifications.NotificationAction[] = [
+    { identifier: SNOOZE_ACTION_ID, buttonTitle: 'Snooze 5 min' },
+    { identifier: SKIP_ACTION_ID, buttonTitle: 'Skip' },
+    { identifier: DONE_ACTION_ID, buttonTitle: 'Done' },
+  ];
+  await Notifications.setNotificationCategoryAsync(BREAK_ALERT_CATEGORY_ID, breakActions);
+  await Notifications.setNotificationCategoryAsync(BREAK_ALERT_ALWAYS_ON_CATEGORY_ID, [
+    ...breakActions,
+    { identifier: PAUSE_ONE_HOUR_ACTION_ID, buttonTitle: 'Pause 1 hour' },
+  ]);
+}
+
+/**
  * Creates (or updates) the Android notification channel. Must run before
  * any notification is scheduled — Android freezes a channel's importance,
  * vibration, and sound settings the first time it's created, and later
@@ -74,6 +136,84 @@ export async function configureAndroidChannelAsync(): Promise<void> {
     lightColor: '#4F9DFF',
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
   });
+}
+
+/**
+ * Creates (or updates) the low-importance channel the ongoing status
+ * notification posts to — LOW so it sits quietly in the shade with no
+ * sound, heads-up popup, or vibration each time its text is refreshed.
+ * Same "must run before scheduling, no-op after the first time" contract
+ * as the alert channel above.
+ */
+export async function configureAndroidOngoingChannelAsync(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(ANDROID_ONGOING_CHANNEL_ID, {
+    name: '20-20-20 Status',
+    importance: Notifications.AndroidImportance.LOW,
+    vibrationPattern: null,
+    enableVibrate: false,
+    sound: null,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  });
+}
+
+function formatOngoingCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+interface OngoingStatusParams {
+  phase: Phase;
+  remainingMs: number;
+}
+
+/**
+ * Presents (or refreshes) the sticky Android status notification showing
+ * the current phase and remaining time. Android-only — iOS has no
+ * ongoing/non-dismissable notification concept to target.
+ *
+ * expo-notifications exposes no chronometer/setWhen API (verified against
+ * both its TypeScript types and its native Android source — neither
+ * mentions it), so there is no way to hand Android a live-updating
+ * countdown that ticks on its own. This instead re-presents the same
+ * `identifier` with fresh text — same "same identifier replaces the
+ * pending/shown entry" mechanism used everywhere else in this file — which
+ * updates the notification in place rather than stacking duplicates, but
+ * is still, literally, repeated re-posting; TimerContext throttles calls
+ * to roughly once every 15 seconds (plus immediately on phase transitions)
+ * to keep that overhead low. This only runs while the app is actually
+ * alive to call it — like the rest of this app, the display goes stale
+ * while backgrounded and catches up next time it's foregrounded.
+ */
+export async function showOngoingStatusAsync({ phase, remainingMs }: OngoingStatusParams): Promise<void> {
+  if (!SCHEDULING_SUPPORTED || Platform.OS !== 'android') return;
+  const title = phase === 'WORK' ? 'Focus time' : 'Break time';
+  const body =
+    phase === 'WORK'
+      ? `${formatOngoingCountdown(remainingMs)} until your break`
+      : `${formatOngoingCountdown(remainingMs)} left — look 20 feet away`;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: ONGOING_STATUS_ID,
+    content: {
+      title,
+      body,
+      sticky: true,
+      autoDismiss: false,
+      sound: false,
+    },
+    // A channel-aware trigger (as opposed to plain `null`) delivers
+    // immediately while still routing to our low-importance channel.
+    trigger: { channelId: ANDROID_ONGOING_CHANNEL_ID },
+  });
+}
+
+/** Removes the sticky status notification — called once reminders stop running (toggled off, paused, outside active hours, or a session pauses/ends). */
+export async function hideOngoingStatusAsync(): Promise<void> {
+  if (!SCHEDULING_SUPPORTED || Platform.OS !== 'android') return;
+  await Notifications.dismissNotificationAsync(ONGOING_STATUS_ID);
 }
 
 export interface PermissionState {
@@ -122,6 +262,8 @@ export async function cancelAllScheduledAsync(): Promise<void> {
 interface WorkEndRepeatingParams {
   workDurationMs: number;
   soundEnabled: boolean;
+  /** Attaches the "Pause 1 hour" action button; pass only for always-on mode. */
+  withPauseAction?: boolean;
 }
 
 /**
@@ -158,6 +300,7 @@ interface WorkEndRepeatingParams {
 export async function scheduleWorkEndRepeatingAsync({
   workDurationMs,
   soundEnabled,
+  withPauseAction = false,
 }: WorkEndRepeatingParams): Promise<void> {
   if (!SCHEDULING_SUPPORTED) return;
 
@@ -169,11 +312,54 @@ export async function scheduleWorkEndRepeatingAsync({
       title: 'Time for an eye break',
       body: 'Look at something 20 feet away for 20 seconds.',
       sound: soundEnabled ? 'default' : undefined,
+      categoryIdentifier: withPauseAction ? BREAK_ALERT_ALWAYS_ON_CATEGORY_ID : BREAK_ALERT_CATEGORY_ID,
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds,
       repeats: true,
+      channelId: ANDROID_CHANNEL_ID,
+    },
+  });
+}
+
+/**
+ * Replaces the repeating work-end alert with a ONE-SHOT reminder
+ * SNOOZE_DURATION_MS out, in response to a "Snooze 5 min" tap. Reuses
+ * WORK_END_REPEATING_ID, so this temporarily converts that pending
+ * request from a repeating trigger to a one-shot (same "same identifier
+ * replaces" mechanism as everywhere else) — a `repeats: true` trigger
+ * can't express "fire once in 5 minutes, then resume the normal
+ * interval," so there is no way to snooze without briefly giving up the
+ * "survives being killed forever" property for exactly this one
+ * work-end cycle. TimerContext closes that gap itself: it stamps
+ * `snoozedUntil` in persisted state and, the next time the app ticks or
+ * foregrounds at or after that instant, calls scheduleWorkEndRepeatingAsync
+ * again to restore the normal repeating cadence — so the gap only
+ * persists until the app is next opened after the snooze elapses (which,
+ * per the one-shot's own tap-to-open behavior, is often immediately).
+ */
+export async function scheduleWorkEndSnoozeAsync({
+  soundEnabled,
+  withPauseAction = false,
+}: {
+  soundEnabled: boolean;
+  withPauseAction?: boolean;
+}): Promise<void> {
+  if (!SCHEDULING_SUPPORTED) return;
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: WORK_END_REPEATING_ID,
+    content: {
+      title: 'Time for an eye break',
+      body: 'Look at something 20 feet away for 20 seconds.',
+      sound: soundEnabled ? 'default' : undefined,
+      categoryIdentifier: withPauseAction ? BREAK_ALERT_ALWAYS_ON_CATEGORY_ID : BREAK_ALERT_CATEGORY_ID,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: SNOOZE_DURATION_MS / 1000,
+      repeats: false,
       channelId: ANDROID_CHANNEL_ID,
     },
   });
@@ -270,6 +456,37 @@ export async function scheduleBreakEndWindowAsync({
     endingPhase = endingPhase === 'WORK' ? 'BREAK' : 'WORK';
     nextTransitionAt += nextPhaseDurationMs;
   }
+}
+
+/**
+ * Subscribes to notification-action taps for as long as the app is
+ * running (warm background or foreground), invoking `onAction` with which
+ * button was tapped. Returns an unsubscribe function.
+ */
+export function addNotificationActionListener(onAction: (action: NotificationActionKind) => void): () => void {
+  if (!SCHEDULING_SUPPORTED) return () => {};
+  const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+    const action = mapActionIdentifier(response.actionIdentifier);
+    if (action) onAction(action);
+  });
+  return () => sub.remove();
+}
+
+/**
+ * Checks whether the app was just cold-launched by tapping a notification
+ * action (addNotificationResponseReceivedListener only fires for
+ * responses received while already running, so a fresh launch needs this
+ * instead). Clears the stored response after reading it so it isn't
+ * re-applied on every subsequent hydration.
+ */
+export async function consumeColdStartActionAsync(): Promise<NotificationActionKind | null> {
+  if (!SCHEDULING_SUPPORTED) return null;
+  const response = await Notifications.getLastNotificationResponseAsync();
+  const action = response ? mapActionIdentifier(response.actionIdentifier) : null;
+  if (action) {
+    await Notifications.clearLastNotificationResponseAsync();
+  }
+  return action;
 }
 
 /**
