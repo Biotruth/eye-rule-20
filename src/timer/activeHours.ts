@@ -1,4 +1,4 @@
-import { ActiveHours, Settings } from '@/constants/timer';
+import type { ActiveHours, Settings } from '@/constants/timer';
 
 /** Minutes since local midnight for a given Date. */
 function minutesOfDay(date: Date): number {
