@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Link } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PermissionBanner } from '@/components/PermissionBanner';
 import { ProgressRing } from '@/components/ProgressRing';
@@ -56,6 +56,11 @@ export function AlwaysOnHome() {
     return () => clearInterval(interval);
   }, []);
 
+  // Sized to the screen so the ring, label, and pause buttons fit below the
+  // header/banner/toggle on smaller phones rather than overflowing upward.
+  const { width, height } = useWindowDimensions();
+  const ringSize = Math.round(Math.min(260, width * 0.62, height * 0.32));
+
   const now = Date.now();
   const isPaused = pausedUntil != null && now < pausedUntil;
   const ringColor = phase === 'WORK' ? colors.primary : colors.success;
@@ -67,7 +72,7 @@ export function AlwaysOnHome() {
       <View style={styles.statusCard}>
         <Ionicons name="notifications-off-outline" size={40} color={colors.textMuted} />
         <Text style={styles.statusTitle}>Reminders are off</Text>
-        <Text style={styles.statusBody}>Turn on the toggle above to start the standing schedule.</Text>
+        <Text style={styles.statusBody}>Turn on Eye reminders to start.</Text>
       </View>
     );
   } else if (manuallyPaused) {
@@ -75,7 +80,7 @@ export function AlwaysOnHome() {
       <View style={styles.statusCard}>
         <Ionicons name="pause-circle-outline" size={40} color={colors.warning} />
         <Text style={styles.statusTitle}>Paused</Text>
-        <Text style={styles.statusBody}>Resume whenever you're ready — no rush.</Text>
+        <Text style={styles.statusBody}>Picks up at {formatDuration(remainingMs)} when you resume.</Text>
         <Pressable style={styles.pillButton} onPress={resumeFromManualPause} accessibilityRole="button">
           <Text style={styles.pillButtonText}>Resume</Text>
         </Pressable>
@@ -86,7 +91,9 @@ export function AlwaysOnHome() {
       <View style={styles.statusCard}>
         <Ionicons name="pause-circle-outline" size={40} color={colors.warning} />
         <Text style={styles.statusTitle}>Paused</Text>
-        <Text style={styles.statusBody}>Resumes in {formatCountdown(pausedUntil!, now)}</Text>
+        <Text style={styles.statusBody}>
+          Resumes in {formatCountdown(pausedUntil!, now)} at {formatDuration(remainingMs)}.
+        </Text>
         <Pressable style={styles.pillButton} onPress={resumeNow} accessibilityRole="button">
           <Text style={styles.pillButtonText}>Resume now</Text>
         </Pressable>
@@ -114,8 +121,10 @@ export function AlwaysOnHome() {
         <Text style={[styles.phaseLabel, { color: ringColor }]}>
           {phase === 'WORK' ? 'NEXT REMINDER' : 'BREAK TIME'}
         </Text>
-        <ProgressRing size={260} strokeWidth={14} progress={progress} color={ringColor}>
-          <Text style={styles.numeral}>{formatDuration(remainingMs)}</Text>
+        <ProgressRing size={ringSize} strokeWidth={14} progress={progress} color={ringColor}>
+          <Text style={[styles.numeral, { fontSize: Math.round(ringSize * 0.26) }]}>
+            {formatDuration(remainingMs)}
+          </Text>
           <Text style={styles.numeralLabel}>{phase === 'WORK' ? 'until your break' : 'look away'}</Text>
         </ProgressRing>
         <View style={styles.pauseRow}>
@@ -160,7 +169,9 @@ export function AlwaysOnHome() {
         />
       </View>
 
-      <View style={styles.body}>{statusView}</View>
+      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        {statusView}
+      </ScrollView>
 
       <Pressable style={styles.sessionLink} onPress={startSession} accessibilityRole="button">
         <Ionicons name="timer-outline" size={18} color={colors.textSecondary} />
@@ -212,8 +223,12 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
+  },
+  bodyContent: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: spacing.lg,
   },
   center: {
     alignItems: 'center',

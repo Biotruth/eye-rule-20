@@ -185,12 +185,23 @@ function reconcileNow(current: PersistedTimerState, settings: Settings, now: num
   }
 
   if (!wasActive) {
+    // Resuming from a pause (indefinite or "Pause 1 hour") picks up the
+    // same phase with the same time left, via pausedRemainingMs stamped
+    // when pausing. Everything else that re-activates the loop (reminders
+    // toggled back on, a new active-hours window) leaves that null and
+    // starts a fresh WORK phase.
+    const resumeRemainingMs = base.pausedRemainingMs;
+    const resumePhase: Phase = resumeRemainingMs != null ? base.phase : 'WORK';
+    const phaseStartedAt =
+      resumeRemainingMs != null
+        ? now - Math.max(0, phaseDurationMs(resumePhase, settings) - resumeRemainingMs)
+        : now;
     return {
       state: {
         ...base,
         isRunning: true,
-        phase: 'WORK',
-        phaseStartedAt: now,
+        phase: resumePhase,
+        phaseStartedAt,
         pausedRemainingMs: null,
         pausedUntil: null,
         snoozedUntil: null,
@@ -288,8 +299,46 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
   const timerStateRef = useRef(timerState);
   timerStateRef.current = timerState;
   const lastPhaseRef = useRef<Phase>(timerState.phase);
+  const notificationsGrantedRef = useRef(notificationsGranted);
+  notificationsGrantedRef.current = notificationsGranted;
+
+  /**
+   * Every schedule call is a no-op while notification permission is
+   * missing (iOS rejects them outright — see canPostNotificationsAsync), so
+   * a timer that started running before the user granted permission has
+   * nothing armed. Called on the not-granted -> granted transition to arm
+   * the schedule for whatever is running right now.
+   */
+  const armScheduleForCurrentState = useCallback(() => {
+    const state = timerStateRef.current;
+    const currentSettings = settingsRef.current;
+    if (!state.isRunning) return;
+    scheduleWorkEndRepeatingAsync({
+      workDurationMs: currentSettings.workMinutes * 60_000,
+      soundEnabled: currentSettings.soundEnabled,
+      withPauseAction: state.mode === 'ALWAYS_ON',
+    }).catch(() => {});
+    scheduleBreakEndWindowAsync({
+      phase: state.phase,
+      phaseStartedAt: state.phaseStartedAt,
+      workDurationMs: currentSettings.workMinutes * 60_000,
+      breakDurationMs: currentSettings.breakSeconds * 1_000,
+      soundEnabled: currentSettings.soundEnabled,
+    }).catch(() => {});
+  }, []);
+
+  const applyPermissionState = useCallback((granted: boolean, askAgain: boolean) => {
+    const wasGranted = notificationsGrantedRef.current;
+    notificationsGrantedRef.current = granted;
+    setNotificationsGranted(granted);
+    setCanAskAgain(askAgain);
+    if (granted && !wasGranted) {
+      armScheduleForCurrentState();
+    }
+  }, [armScheduleForCurrentState]);
 
   const fireForegroundAlert = useCallback(() => {
+    if (!settingsRef.current.vibrationEnabled) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
   }, []);
 
@@ -412,6 +461,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     const next: PersistedTimerState = {
       ...current,
       isRunning: false,
+      pausedRemainingMs: current.isRunning ? remainingMsFor(current, currentSettings, now) : current.pausedRemainingMs,
       pausedUntil: now + PAUSE_DURATION_MS,
     };
     persist(next);
@@ -430,6 +480,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     const next: PersistedTimerState = {
       ...current,
       isRunning: false,
+      pausedRemainingMs: current.isRunning ? remainingMsFor(current, currentSettings, now) : current.pausedRemainingMs,
       manuallyPaused: true,
     };
     persist(next);
@@ -577,6 +628,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
           setOnboardingVisible(true);
         }
 
+        notificationsGrantedRef.current = permission.granted;
         setNotificationsGranted(permission.granted);
         setCanAskAgain(permission.canAskAgain);
 
@@ -694,15 +746,14 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       applyReconciled(reconciled, currentSettings);
       setRemainingMs(remainingMsFor(reconciled.state, currentSettings, now));
 
+      // Also catches the user granting permission from iOS/Android
+      // Settings while the app was in the background.
       getPermissionStateAsync()
-        .then((p) => {
-          setNotificationsGranted(p.granted);
-          setCanAskAgain(p.canAskAgain);
-        })
+        .then((p) => applyPermissionState(p.granted, p.canAskAgain))
         .catch(() => {});
     });
     return () => sub.remove();
-  }, [hydrated, applyReconciled]);
+  }, [hydrated, applyReconciled, applyPermissionState]);
 
   // ---- Session-mode manual controls (unchanged from the original design) ----
   const start = useCallback(() => {
@@ -888,15 +939,19 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     applyReconciled(reconciled, next);
     setRemainingMs(remainingMsFor(reconciled.state, next, now));
 
-    // A work/break duration change needs its own reschedule even when
-    // reconcile above didn't flip phase/running (e.g. adjusting
+    // A work/break duration or sound change needs its own reschedule even
+    // when reconcile above didn't flip phase/running (e.g. adjusting
     // workMinutes mid-WORK-phase doesn't cross a phase boundary) — the
-    // repeating alert's period and the break window's absolute
-    // timestamps both derive from these durations. Skip this when
-    // applyReconciled already armed/cancelled/restored the schedule above.
-    const durationChanged = partial.workMinutes !== undefined || partial.breakSeconds !== undefined;
+    // repeating alert's period, the break window's absolute timestamps,
+    // and every pending alert's sound are all baked in at schedule time.
+    // Skip this when applyReconciled already armed/cancelled/restored the
+    // schedule above.
+    const scheduleAffected =
+      partial.workMinutes !== undefined ||
+      partial.breakSeconds !== undefined ||
+      partial.soundEnabled !== undefined;
     if (
-      durationChanged &&
+      scheduleAffected &&
       reconciled.state.isRunning &&
       !reconciled.justActivated &&
       !reconciled.justDeactivated &&
@@ -919,15 +974,13 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
   const requestNotificationPermission = useCallback(async () => {
     const result = await requestPermissionsAsync();
-    setNotificationsGranted(result.granted);
-    setCanAskAgain(result.canAskAgain);
-  }, []);
+    applyPermissionState(result.granted, result.canAskAgain);
+  }, [applyPermissionState]);
 
   const refreshPermissionState = useCallback(async () => {
     const result = await getPermissionStateAsync();
-    setNotificationsGranted(result.granted);
-    setCanAskAgain(result.canAskAgain);
-  }, []);
+    applyPermissionState(result.granted, result.canAskAgain);
+  }, [applyPermissionState]);
 
   // ---- Permission priming: explainer before the OS dialog ----
   const showPermissionPrimer = useCallback(() => {

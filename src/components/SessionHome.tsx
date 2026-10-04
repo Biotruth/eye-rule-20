@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Link } from 'expo-router';
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PermissionBanner } from '@/components/PermissionBanner';
 import { ProgressRing } from '@/components/ProgressRing';
@@ -32,6 +32,8 @@ export function SessionHome() {
     showPermissionPrimer,
   } = useTimer();
 
+  const { width, height } = useWindowDimensions();
+  const ringSize = Math.round(Math.min(280, width * 0.66, height * 0.34));
   const progress = phaseDurationMs > 0 ? 1 - remainingMs / phaseDurationMs : 0;
   const ringColor = phase === 'WORK' ? colors.primary : colors.success;
 
@@ -53,18 +55,20 @@ export function SessionHome() {
         <PermissionBanner canAskAgain={canAskAgain} onRequestPermission={showPermissionPrimer} />
       )}
 
-      <View style={styles.center}>
+      <ScrollView style={styles.body} contentContainerStyle={styles.center}>
         <Text style={[styles.phaseLabel, { color: ringColor }]}>
           {phase === 'WORK' ? 'FOCUS TIME' : 'BREAK TIME'}
         </Text>
-        <ProgressRing size={280} strokeWidth={16} progress={progress} color={ringColor}>
-          <Text style={styles.numeral}>{formatDuration(remainingMs)}</Text>
+        <ProgressRing size={ringSize} strokeWidth={16} progress={progress} color={ringColor}>
+          <Text style={[styles.numeral, { fontSize: Math.round(ringSize * 0.26) }]}>
+            {formatDuration(remainingMs)}
+          </Text>
           <Text style={styles.numeralLabel}>{phase === 'WORK' ? 'until your break' : 'look away'}</Text>
         </ProgressRing>
         <Text style={styles.cycleCount}>
           {cyclesCompletedToday} {cyclesCompletedToday === 1 ? 'break' : 'breaks'} today
         </Text>
-      </View>
+      </ScrollView>
 
       <View style={styles.controls}>
         <Pressable style={styles.secondaryButton} onPress={reset} accessibilityRole="button">
@@ -115,10 +119,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 1,
   },
-  center: {
+  body: {
     flex: 1,
+  },
+  center: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: spacing.lg,
     gap: spacing.lg,
   },
   phaseLabel: {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing, typography } from '@/constants/theme';
 
 interface PermissionBannerProps {
@@ -9,26 +9,21 @@ interface PermissionBannerProps {
 
 export function PermissionBanner({ canAskAgain, onRequestPermission }: PermissionBannerProps) {
   const openSettings = () => {
-    if (Platform.OS === 'ios') {
-      Linking.openURL('app-settings:');
-    } else {
-      Linking.openSettings();
-    }
+    Linking.openSettings().catch(() => {});
   };
 
   return (
     <View style={styles.banner}>
-      <Text style={styles.title}>Notifications are off</Text>
-      <Text style={styles.body}>
-        Alerts won&apos;t fire while the app is in the background. Enable notifications so you
-        don&apos;t miss your eye breaks.
-      </Text>
+      <View style={styles.textBlock}>
+        <Text style={styles.title}>Notifications are off</Text>
+        <Text style={styles.body}>Breaks won&apos;t reach you when the app is closed.</Text>
+      </View>
       <Pressable
         style={styles.button}
         onPress={canAskAgain ? onRequestPermission : openSettings}
         accessibilityRole="button"
       >
-        <Text style={styles.buttonText}>{canAskAgain ? 'Enable notifications' : 'Open Settings'}</Text>
+        <Text style={styles.buttonText}>{canAskAgain ? 'Enable' : 'Settings'}</Text>
       </Pressable>
     </View>
   );
@@ -36,28 +31,32 @@ export function PermissionBanner({ canAskAgain, onRequestPermission }: Permissio
 
 const styles = StyleSheet.create({
   banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.warning,
     borderWidth: 1,
     borderRadius: 12,
-    padding: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
   },
+  textBlock: {
+    flex: 1,
+  },
   title: {
     color: colors.warning,
-    fontSize: typography.body,
+    fontSize: typography.caption,
     fontWeight: '700',
-    marginBottom: spacing.xs,
   },
   body: {
     color: colors.textSecondary,
     fontSize: typography.caption,
     lineHeight: 18,
-    marginBottom: spacing.sm,
   },
   button: {
-    alignSelf: 'flex-start',
     backgroundColor: colors.warning,
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,

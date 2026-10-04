@@ -73,6 +73,17 @@ function mapActionIdentifier(actionIdentifier: string): NotificationActionKind |
 // if it's ever run in a browser (e.g. `expo start --web` during development).
 const SCHEDULING_SUPPORTED = Platform.OS !== 'web';
 
+// iOS rejects UNUserNotificationCenter.add() outright (surfacing as
+// ERR_NOTIFICATIONS_FAILED_TO_SCHEDULE) when the app isn't authorized, and
+// since the permission primer means the app can now be running before the
+// user has granted anything, every schedule/present call checks first.
+// TimerContext re-arms the schedule once permission is granted.
+async function canPostNotificationsAsync(): Promise<boolean> {
+  if (!SCHEDULING_SUPPORTED) return false;
+  const { granted } = await Notifications.getPermissionsAsync();
+  return granted;
+}
+
 /**
  * Notifications received while the app is foregrounded still get shown as a
  * banner. In practice the app almost never needs this path (foreground
@@ -188,7 +199,7 @@ interface OngoingStatusParams {
  * while backgrounded and catches up next time it's foregrounded.
  */
 export async function showOngoingStatusAsync({ phase, remainingMs }: OngoingStatusParams): Promise<void> {
-  if (!SCHEDULING_SUPPORTED || Platform.OS !== 'android') return;
+  if (Platform.OS !== 'android' || !(await canPostNotificationsAsync())) return;
   const title = phase === 'WORK' ? 'Focus time' : 'Break time';
   const body =
     phase === 'WORK'
@@ -302,7 +313,7 @@ export async function scheduleWorkEndRepeatingAsync({
   soundEnabled,
   withPauseAction = false,
 }: WorkEndRepeatingParams): Promise<void> {
-  if (!SCHEDULING_SUPPORTED) return;
+  if (!(await canPostNotificationsAsync())) return;
 
   const seconds = Math.max(IOS_MIN_REPEATING_SECONDS, Math.round(workDurationMs / 1000));
 
@@ -346,7 +357,7 @@ export async function scheduleWorkEndSnoozeAsync({
   soundEnabled: boolean;
   withPauseAction?: boolean;
 }): Promise<void> {
-  if (!SCHEDULING_SUPPORTED) return;
+  if (!(await canPostNotificationsAsync())) return;
 
   await Notifications.scheduleNotificationAsync({
     identifier: WORK_END_REPEATING_ID,
@@ -414,7 +425,7 @@ export async function scheduleBreakEndWindowAsync({
   breakDurationMs,
   soundEnabled,
 }: BreakEndWindowParams): Promise<void> {
-  if (!SCHEDULING_SUPPORTED) return;
+  if (!(await canPostNotificationsAsync())) return;
 
   const now = Date.now();
   const currentPhaseDurationMs = phase === 'WORK' ? workDurationMs : breakDurationMs;
@@ -500,10 +511,10 @@ export async function consumeColdStartActionAsync(): Promise<NotificationActionK
  * to CYCLES_TO_SCHEDULE entries named `eye-rule-20-break-end-slot-N`, and
  * nothing else.
  */
-export async function logScheduledNotificationsAsync(): Promise<void> {
+export async function logScheduledNotificationsAsync(): Promise<number> {
   if (!SCHEDULING_SUPPORTED) {
     console.log('[notifications] scheduling not supported on this platform (web)');
-    return;
+    return 0;
   }
   const pending = await Notifications.getAllScheduledNotificationsAsync();
   console.log(`[notifications] ${pending.length} pending notification(s):`);
@@ -527,4 +538,5 @@ export async function logScheduledNotificationsAsync(): Promise<void> {
         `seconds=${trigger.seconds} repeats=${trigger.repeats ?? false}${etaLabel}`,
     );
   }
+  return pending.length;
 }

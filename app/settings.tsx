@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PermissionBanner } from '@/components/PermissionBanner';
 import { Stepper } from '@/components/Stepper';
@@ -75,7 +75,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <SettingsRow
             label="Restrict to active hours"
-            description="Off by default — reminders just run whenever you turn them on, no schedule. Turn this on to auto-pause outside set hours/days instead."
+            description="Only remind during set hours and days"
             value={settings.activeHoursEnabled}
             onValueChange={(activeHoursEnabled) => updateSettings({ activeHoursEnabled })}
           />
@@ -90,7 +90,7 @@ export default function SettingsScreen() {
                 max={settings.activeHours.endMinutes - 30}
                 step={30}
                 formatValue={formatMinutesOfDay}
-                rangeLabel="When the standing schedule begins each active day"
+                rangeLabel="Reminders begin"
                 onChange={(startMinutes) =>
                   updateSettings({ activeHours: { ...settings.activeHours, startMinutes } })
                 }
@@ -104,7 +104,7 @@ export default function SettingsScreen() {
                 max={24 * 60}
                 step={30}
                 formatValue={formatMinutesOfDay}
-                rangeLabel="When it stops for the day"
+                rangeLabel="Reminders stop"
                 onChange={(endMinutes) =>
                   updateSettings({ activeHours: { ...settings.activeHours, endMinutes } })
                 }
@@ -125,14 +125,14 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <SettingsRow
             label="Vibration"
-            description="Haptic pulse at each phase transition"
+            description="Buzz when a break starts or ends"
             value={settings.vibrationEnabled}
             onValueChange={(vibrationEnabled) => updateSettings({ vibrationEnabled })}
           />
           <View style={styles.divider} />
           <SettingsRow
             label="Sound"
-            description="Play a sound with background notifications"
+            description="Play a sound with alerts"
             value={settings.soundEnabled}
             onValueChange={(soundEnabled) => updateSettings({ soundEnabled })}
           />
@@ -142,7 +142,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <SettingsRow
             label="Keep screen awake"
-            description="Prevent the screen from sleeping while the timer runs"
+            description="While the timer is running"
             value={settings.keepAwakeEnabled}
             onValueChange={(keepAwakeEnabled) => updateSettings({ keepAwakeEnabled })}
           />
@@ -152,7 +152,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <Pressable style={styles.debugRow} onPress={showOnboarding} accessibilityRole="button">
             <Text style={styles.label}>How the 20-20-20 rule works</Text>
-            <Text style={styles.description}>Replay the short first-launch explainer</Text>
+            <Text style={styles.description}>Replay the intro</Text>
           </Pressable>
         </View>
 
@@ -162,30 +162,37 @@ export default function SettingsScreen() {
             <View style={styles.card}>
               <Pressable style={styles.debugRow} onPress={showPermissionPrimer} accessibilityRole="button">
                 <Text style={styles.label}>Show permission primer</Text>
-                <Text style={styles.description}>Previews the pre-permission explainer screen</Text>
+                <Text style={styles.description}>Preview the permission prompt</Text>
               </Pressable>
               {Platform.OS !== 'web' && (
                 <>
                   <View style={styles.divider} />
                   <Pressable
                     style={styles.debugRow}
-                    onPress={() => logScheduledNotificationsAsync().catch(() => {})}
+                    onPress={() =>
+                      logScheduledNotificationsAsync()
+                        .then((count) =>
+                          Alert.alert('Scheduled notifications', `${count} pending. Full details are in the dev console.`),
+                        )
+                        .catch(() => {})
+                    }
                     accessibilityRole="button"
                   >
                     <Text style={styles.label}>Log scheduled notifications</Text>
-                    <Text style={styles.description}>Prints the pending schedule to the JS console</Text>
+                    <Text style={styles.description}>Count pending alerts</Text>
                   </Pressable>
                   <View style={styles.divider} />
                   <Pressable
                     style={styles.debugRow}
-                    onPress={() => cancelAllScheduledAsync().catch(() => {})}
+                    onPress={() =>
+                      cancelAllScheduledAsync()
+                        .then(() => Alert.alert('Reminders stopped', 'All pending alerts were cancelled.'))
+                        .catch(() => {})
+                    }
                     accessibilityRole="button"
                   >
                     <Text style={[styles.label, { color: colors.danger }]}>Stop all reminders</Text>
-                    <Text style={styles.description}>
-                      Cancels every pending notification (repeating + one-shots). Does not affect the
-                      running timer.
-                    </Text>
+                    <Text style={styles.description}>Cancel pending alerts (timer keeps running)</Text>
                   </Pressable>
                 </>
               )}
