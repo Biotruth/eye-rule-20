@@ -20,6 +20,8 @@ npm ci
 npm start
 ```
 
+The committed `.npmrc` uses legacy peer resolution to reproduce the existing lockfile. Dependency versions are unchanged; native dependency compatibility still needs device testing.
+
 The project also provides these commands:
 
 | Command | Purpose |
